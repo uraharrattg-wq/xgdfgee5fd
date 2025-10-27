@@ -1,0 +1,124 @@
+name: update-from-dispatch
+
+on:
+  repository_dispatch:
+    types: [update-data]
+
+# Allow this workflow to write repository contents so commits/pushes succeed
+permissions:
+  contents: write
+  actions: write
+  pages: write
+
+jobs:
+  update-file:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # ensure the action can push commits using the provided GITHUB_TOKEN
+          persist-credentials: true
+
+      - name: Write payload content to file
+        env:
+          PATH_TO_WRITE: ${{ github.event.client_payload.data.path }}
+          name: update-from-dispatch
+
+          on:
+            repository_dispatch:
+              types: [update-data]
+
+          # Allow this workflow to write repository contents so commits/pushes succeed
+          permissions:
+            contents: write
+            actions: write
+            pages: write
+
+          jobs:
+            update-file:
+              runs-on: ubuntu-latest
+              steps:
+                - name: Checkout repository
+                  uses: actions/checkout@v4
+                  with:
+                    # ensure the action can push commits using the provided GITHUB_TOKEN
+                    persist-credentials: true
+
+                - name: Write payload content to file
+                  env:
+                    PATH_TO_WRITE: ${{ github.event.client_payload.data.path }}
+                    CONTENT: ${{ github.event.client_payload.data.content }}
+                  run: |
+                    if [ -z "$PATH_TO_WRITE" ]; then
+                      echo "No path provided in payload, aborting";
+                      exit 1;
+                    fi
+                    echo "Writing to $PATH_TO_WRITE"
+                    # normalize path (remove leading slashes)
+                    PATH_TO_WRITE=${PATH_TO_WRITE#/}
+                    DIRNAME=$(dirname "$PATH_TO_WRITE")
+                    if [ "$DIRNAME" != "." ]; then mkdir -p "$DIRNAME"; fi
+                    # write content safely
+                    printf '%s' "$CONTENT" > "$PATH_TO_WRITE"
+                    git add "$PATH_TO_WRITE"
+                    git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m "Update $PATH_TO_WRITE via repository_dispatch" || echo "No changes to commit"
+                    git push
+
+                - name: Ensure GitHub Pages site is enabled
+                  uses: actions/github-script@v6
+                  with:
+                    script: |
+                      const owner = context.repo.owner;
+                      const repo = context.repo.repo;
+                      try {
+                        // Enable Pages site on default branch (main) and root path. If your site requires /docs, adjust accordingly.
+                        await github.request('PUT /repos/{owner}/{repo}/pages', {
+                          owner,
+                          repo,
+                          source: { branch: 'main', path: '/' }
+                        });
+                        core.info('Pages site enabled (or already present)');
+                      } catch (err) {
+                        core.warning('Failed to enable Pages via API: ' + (err && err.message));
+                      }
+
+                - name: Trigger Pages workflow (dispatch)
+                  uses: actions/github-script@v6
+                  with:
+                    script: |
+                      const owner = context.repo.owner;
+                      const repo = context.repo.repo;
+                      const workflow = 'pages.yml';
+                      try {
+                        await github.request('POST /repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches', {
+                          owner,
+                          repo,
+                          workflow_id: workflow,
+                          ref: 'main'
+                        });
+                        core.info('Triggered pages workflow dispatch');
+                      } catch (err) {
+                        core.warning('Failed to dispatch pages workflow: ' + (err && err.message));
+                      }
+                                    }
+
+                              - name: Trigger Pages workflow (dispatch)
+                                uses: actions/github-script@v6
+                                with:
+                                  script: |
+                                    const owner = context.repo.owner;
+                                    const repo = context.repo.repo;
+                                    const workflow = 'pages.yml';
+                                    try {
+                                      await github.request('POST /repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches', {
+                                        owner,
+                                        repo,
+                                        workflow_id: workflow,
+                                        ref: 'main'
+                                      });
+                                      core.info('Triggered pages workflow dispatch');
+                                    } catch (err) {
+                                      core.warning('Failed to dispatch pages workflow: ' + (err && err.message));
+                                    }
+

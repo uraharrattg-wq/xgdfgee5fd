@@ -1,0 +1,96 @@
+name: Create client from Issue
+
+name: Create client from Issue
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  create-from-issue:
+    runs-on: ubuntu-latest
+    name: Create client from Issue
+
+    on:
+      issues:
+        types: [opened]
+
+    jobs:
+      create-from-issue:
+        runs-on: ubuntu-latest
+        steps:
+          - name: Show event info
+            run: |
+              echo "Issue opened: ${{ github.event.issue.title }}"
+              echo "From repo: $GITHUB_REPOSITORY"
+
+          - name: Parse issue body and create repo from template
+            name: Create client from Issue
+
+            on:
+              issues:
+                types: [opened]
+
+            jobs:
+              create-from-issue:
+                runs-on: ubuntu-latest
+                steps:
+                  - name: Show event info
+                    run: |
+                      echo "Issue opened: ${{ github.event.issue.title }}"
+                      echo "From repo: $GITHUB_REPOSITORY"
+
+                  - name: Parse issue body and create repo from template
+                    env:
+                      TEMPLATE_PAT: ${{ secrets.TEMPLATE_PAT }}
+                      GITHUB_REPOSITORY: ${{ github.repository }}
+                      ISSUE_BODY: ${{ toJson(github.event.issue.body) }}
+                    run: |
+                      #!/bin/bash
+                      set -euo pipefail
+                      # ISSUE_BODY contains the issue body as a JSON string; remove surrounding quotes
+                      body=$(printf "%s" "$ISSUE_BODY" | sed -e 's/^"//' -e 's/"$//' | sed 's/\\n/\n/g')
+
+                      echo "Parsed body:\n$body"
+
+                      # Simple parser: look for lines like 'key: value'
+                      get_field(){
+                        echo "$body" | grep -i "^$1:" | sed -E "s/^$1:[[:space:]]*//I" | sed -e 's/"/\\"/g'
+                      }
+
+                      client_name=$(get_field client_name || true)
+                      owner=$(get_field owner || true)
+                      repo=$(get_field repo || true)
+                      description=$(get_field description || true)
+                      image=$(get_field image || true)
+
+                      if [ -z "$owner" ] || [ -z "$repo" ]; then
+                        echo "Missing owner or repo in Issue body. Provide lines like 'owner: your-user' and 'repo: client-slug'" >&2
+                        exit 1
+                      fi
+
+                      echo "Creating repo '$owner/$repo' from template $GITHUB_REPOSITORY"
+
+                      # API: POST /repos/{template_owner}/{template_repo}/generate
+                      url="https://api.github.com/repos/$GITHUB_REPOSITORY/generate"
+                      payload=$(jq -n --arg name "$repo" --arg owner "$owner" '{name:$name, owner:$owner, private:false}')
+
+                      resp=$(curl -s -w "\n%{http_code}" -X POST -H "Authorization: token $TEMPLATE_PAT" -H "Accept: application/vnd.github.baptiste-preview+json" -d "$payload" "$url")
+                      http=$(echo "$resp" | tail -n1)
+                      body_resp=$(echo "$resp" | sed '$d')
+
+                      if [ "$http" -ge 200 ] && [ "$http" -lt 300 ]; then
+                        echo "Repository created: $body_resp"
+                      else
+                        echo "Failed to create repository (HTTP $http):" >&2
+                        echo "$body_resp" >&2
+                        exit 1
+                      fi
+
+                      # Post comment to issue with Pages URL suggestion
+                      pages_url="https://$owner.github.io/$repo/"
+                      issue_api="${{ github.api_url }}/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments"
+                      comment_body=$(jq -n --arg c "$pages_url" '{body: ("Страница: " + $c + " (публикация может занять время)" )}')
+                      curl -s -X POST -H "Authorization: token $TEMPLATE_PAT" -H "Content-Type: application/json" -d "$comment_body" "$issue_api" >/dev/null || true
+
+                      echo "Done. Suggested Pages URL: $pages_url"
